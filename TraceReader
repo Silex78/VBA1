@@ -1,0 +1,703 @@
+Public TableauData() As String
+Public Trace As String
+Public RepertoireTrace As String
+
+Sub TraceReader()
+
+Dim T As Double
+T = Timer
+
+Dim TableauData_Temp() As String
+Dim i As Long, j As Long, k As Long
+Dim a As Integer
+
+    RepertoireTrace = Worksheets("ListTemp").Range("G2").Value
+    
+If Left(ReadTrace.LB_ReadTrace_Files.Column(0, 0), 6) = "Gloria" Then
+
+    j = 0
+    For i = 0 To ReadTrace.LB_ReadTrace_Files.ListCount - 1
+        If ReadTrace.LB_ReadTrace_Files.Selected(i) = True Then
+            Trace = ReadFileToBuffer(RepertoireTrace & ReadTrace.LB_ReadTrace_Files.Column(0, i))
+            If Trace <> "" Then
+            j = j + 1
+            ReDim Preserve TableauData_Temp(1 To 4, 1 To j) 'FileName, FileDate, TraceContent, FileNumberLigne
+            ' !!!! TableauData_Temp est en colonne/ligne !!!!
+            TableauData_Temp(1, j) = ReadTrace.LB_ReadTrace_Files.Column(0, i)
+            a = InStr(1, TableauData_Temp(1, j), "_")
+            TableauData_Temp(2, j) = CDate(Mid(TableauData_Temp(1, j), a + 1, 4) & "." & Mid(TableauData_Temp(1, j), a + 5, 2) & "." & Mid(TableauData_Temp(1, j), a + 7, 2))
+            TableauData_Temp(3, j) = Trace
+            TableauData_Temp(4, j) = UBound(Split(Trace, vbCrLf))
+            End If
+        End If
+    Next i
+
+    If j = 0 Then
+        MsgBox "Please, select at least one trace file", , "No trace selected"
+        Exit Sub
+    End If
+    
+' On remet le tableau dans l'ordre Ligne/Colonnes
+ReDim TableauData(1 To j, 1 To 4)
+    For i = 1 To j
+        For k = 1 To 4
+            TableauData(i, k) = TableauData_Temp(k, i)
+        Next k
+    Next i
+
+    Trace = TableauData(1, 3)
+    If UBound(TableauData(), 1) > 1 Then
+        For i = 2 To j
+            Trace = Trace & TableauData(i, 3) 'vbCrLf &
+        Next i
+    End If
+
+    Call MiseEnForme_ReadTrace_MDS
+        
+ElseIf Left(ReadTrace.LB_ReadTrace_Files.Column(0, 0), 5) = "TKMDF" Then:  ' Version big file
+    
+    j = 0
+    For i = 0 To ReadTrace.LB_ReadTrace_Files.ListCount - 1
+        If ReadTrace.LB_ReadTrace_Files.Selected(i) = True Then
+            j = j + 1
+            Call Import_Fichier_Txt(RepertoireTrace, ReadTrace.LB_ReadTrace_Files.Column(0, i), "Trace")
+        End If
+    Next i
+        
+    If j = 0 Then
+        MsgBox "Please, select at least one trace file", , "No trace selected"
+        Exit Sub
+    End If
+
+    Call ReadTrace_TK_BigFile
+    
+Else: MsgBox "Please, rename your file." & vbCr & "It must begin by either ""TKMDF"" or ""Gloria""."
+   
+End If
+    
+Application.ScreenUpdating = True
+
+MsgBox "Temps mis :" & Timer - T & " secondes", , Temps
+End Sub
+
+'##################################
+'############# TKMDF ##############
+'##################################
+
+Sub ReadTrace_TK()
+Application.ScreenUpdating = False
+
+Dim TableauOrd(), TableauColonneNb(), TableauFinal() ' TableauTrace() As String,
+Dim i As Long, j As Long, k As Long, l As Long, nbRows As Long
+Dim nbMaxCol As Long, a As Long, b As Long
+Dim Fichier
+Dim FileName As String
+Dim Ws_Req As Worksheet
+
+    Call FileToTab(Trace, , ";", "x") ' On met le fichier txt en tableau (parsé sur ";").
+
+Set Ws_Req = ActiveWorkbook.Worksheets("TK_Req")
+    nbRows = UBound(TableauTrace(), 1)
+    nbMaxCol = 0
+    
+    For i = 1 To nbRows
+        If InStr(1, TableauTrace(i, 3), "Exch:") = 1 Then TableauTrace(i, 3) = WorksheetFunction.Substitute(TableauTrace(i, 3), "Exch:", "2=")
+    Next i
+
+'''' Remplissage du tableau 3D ''''''
+a = UBound(TableauTrace(), 1)
+b = UBound(TableauTrace(), 2)
+
+ReDim Tableau3D(1 To UBound(TableauTrace(), 1), 1 To UBound(TableauTrace(), 2), 1 To 2)
+
+    For i = 1 To a
+        Tableau3D(i, 1, 1) = TableauTrace(i, 1)
+        Tableau3D(i, 2, 1) = TableauTrace(i, 2)
+        On Error Resume Next
+        For j = 3 To b
+            Tableau3D(i, j, 1) = Split(TableauTrace(i, j), "=")(1) ' Fid number en position 2
+            Tableau3D(i, j, 2) = Split(TableauTrace(i, j), "=")(0) ' Value en position 1
+        Next j
+    Next i
+ 
+' On etablit la liste des colonnes utilisées (TabCol(1) = 0)
+Dim TabCol() As Integer
+ReDim TabCol(1 To 1)
+    For i = 1 To a
+        j = 3
+        While Tableau3D(i, j, 2) <> ""
+            If Find1D(Tableau3D(i, j, 2), TabCol()) = False Then
+                ReDim Preserve TabCol(1 To UBound(TabCol()) + 1)
+                TabCol(UBound(TabCol())) = Tableau3D(i, j, 2)
+            End If
+            j = j + 1
+        Wend
+    Next i
+    
+' Tri croissant de TabCol
+Call ShellSortInteger(TabCol)
+
+' Creation et populate du fichier final
+ReDim TableauOrd(1 To a + 2, 1 To UBound(TabCol()) - 1 + 2 + 2) ' -1 car TabCol(1) = 0
+
+    TableauOrd(1, 1) = "File"
+    TableauOrd(1, 2) = "Date"
+    TableauOrd(1, 3) = "Time"
+    TableauOrd(1, 4) = "Valoren"
+    TableauOrd(2, 2) = " "
+    TableauOrd(2, 2) = " "
+    TableauOrd(2, 3) = " "
+    TableauOrd(2, 4) = " "
+    
+' Remplissage nom et numero de colonnes
+    For j = 2 To UBound(TabCol())
+        TableauOrd(2, j + 5 - 2) = TabCol(j)
+        TableauOrd(1, j + 5 - 2) = WorksheetFunction.VLookup(TabCol(j), Ws_Req.Columns("A:B"), 2, 0)
+    Next j
+    
+' Remplissage des colonnes 1 et 2 (FileName et Date)
+    l = 1
+    For i = 1 To UBound(TableauData(), 1)
+        For j = l To TableauData(i, 4) + l - 1
+            TableauOrd(j + 2, 1) = TableauData(i, 1)
+            TableauOrd(j + 2, 2) = TableauData(i, 2)
+        Next j
+        l = l + TableauData(i, 4)
+    Next i
+    
+' Remplissage des données du tableau 3D
+    For i = 1 To a
+        TableauOrd(i + 2, 3) = Tableau3D(i, 1, 1) ' Colonnes 3 et 4 (Time et Valoren)
+        TableauOrd(i + 2, 4) = Tableau3D(i, 2, 1)
+        
+        j = 3  ' Remplissage des datas
+        While Tableau3D(i, j, 2) <> ""
+            x = WorksheetFunction.Match(Tableau3D(i, j, 2) * 1, TabCol, 0)
+            TableauOrd(i + 2, x + 4 - 1) = Tableau3D(i, j, 1)
+            j = j + 1
+        Wend
+    Next i
+    
+'''''''''''''''''
+'    For i = 1 To 50
+'       For j = 1 To 50
+'           Debug.Print TableauOrd(i, j)
+'       Next j
+'    Next i
+''''''''''''''''''''''''''''
+    
+' On met le tableau final dans un tableau 1 dimension et on le sauve en fichier txt.
+
+    Fichier = Join(File1Dim(TableauOrd(), 2), vbLf)
+    FileName = ActiveWorkbook.Path & "\ReadTrace_TK_" & Date & "_" & WorksheetFunction.Substitute(Time, ":", ".")
+    FileName = WorksheetFunction.Substitute(FileName, "/", ".")
+    Call WriteFileFromBuffer(FileName & ".txt", Fichier)
+    
+    Workbooks.OpenText FileName:=FileName & ".txt", Tab:=True
+    
+    Cells.Select
+    With Selection.Font
+        .Name = "Arial"
+        .Size = 8
+    End With
+    
+    Rows("1:2").Select
+    With Selection
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .WrapText = True
+    End With
+    Cells.ColumnWidth = 9
+    Cells.EntireRow.AutoFit
+    Cells.EntireColumn.AutoFit
+    
+    Rows("3:3").Select
+    ActiveWindow.FreezePanes = True
+
+    ActiveSheet.Sort.SortFields.Clear
+    ActiveSheet.Sort.SortFields.Add Key:=Range("E3:D" & Range("E800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    ActiveSheet.Sort.SortFields.Add Key:=Range("D3:D" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    ActiveSheet.Sort.SortFields.Add Key:=Range("B3:B" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortTextAsNumbers
+    ActiveSheet.Sort.SortFields.Add Key:=Range("C3:C" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    With ActiveSheet.Sort
+        .SetRange Range(Cells(3, 1), Cells(Range("D800000").End(xlUp).Row, Range("ZZ1").End(xlToLeft).Column))
+        .Header = xlGuess
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+    Cells(1, 1).Select
+    
+    ActiveWorkbook.SaveAs FileName:=FileName & ".xlsx", FileFormat:=xlOpenXMLWorkbook
+    Kill FileName & ".txt"
+
+End Sub
+
+'##################################
+'############# MDS ################
+'##################################
+
+Sub MiseEnForme_ReadTrace_MDS()
+Application.ScreenUpdating = False
+
+Dim TableauOrd(), TableauColonneNb(), TableauFinal() ' TableauTrace() As String,
+Dim i As Long, j As Long, k As Long, l As Long, nbRows As Long
+Dim nbMaxCol As Long, a As Long, b As Long
+Dim Fichier
+Dim FileName As String
+Dim Ws_Req As Worksheet
+
+    Call FileToTab(Trace, , ";", "x") ' On met le fichier txt en tableau (parsé sur ";").
+
+Set Ws_Req = ActiveWorkbook.Worksheets("SLC_Req")
+    nbRows = UBound(TableauTrace(), 1)
+    nbMaxCol = 0
+    
+    For i = 1 To nbRows
+        If InStr(1, TableauTrace(i, 3), "Exch:") = 1 Then TableauTrace(i, 3) = WorksheetFunction.Substitute(TableauTrace(i, 3), "Exch:", "2=")
+    Next i
+
+'''' Remplissage du tableau 3D ''''''
+a = UBound(TableauTrace(), 1)
+b = UBound(TableauTrace(), 2) + 1 ' +1 car on split le symbole et le GLID (])
+
+ReDim Tableau3D(1 To a, 1 To b, 1 To 2)
+
+    For i = 1 To a
+        Tableau3D(i, 1, 1) = TableauTrace(i, 1)
+        Tableau3D(i, 2, 1) = TableauTrace(i, 2)
+        Tableau3D(i, 3, 1) = WorksheetFunction.Substitute(Split(TableauTrace(i, 3), "]")(0), "[", "")
+        Tableau3D(i, 4, 1) = Split(TableauTrace(i, 3), "]")(1)
+        
+        On Error Resume Next
+        For j = 5 To b
+            If InStrRev(TableauTrace(i, j - 1), "=") <> 0 Then
+                Tableau3D(i, j, 1) = Split(TableauTrace(i, j - 1), "=")(1) ' Fid number en position 2
+                Tableau3D(i, j, 2) = Split(TableauTrace(i, j - 1), "=")(0) ' Value en position 1
+            ElseIf TableauTrace(i, j - 1) <> "" Then
+                Tableau3D(i, j - 1, 1) = Tableau3D(i, j - 1, 1) & ";" & TableauTrace(i, j - 1) ' Gestion des ";" à prendre en compte
+                Tableau3D(i, j, 1) = ""
+            End If
+        Next j
+    Next i
+
+'''''''''''''''''
+'    For i = 1 To a
+'       For j = 1 To b
+'           Debug.Print Tableau3D(i, j, 1)
+'       Next j
+'    Next i
+''''''''''''''''''''''''''''
+ 
+' On etablit la liste des colonnes utilisées (TabCol(1) = 0)
+Dim TabCol() As Integer
+ReDim TabCol(1 To 1)
+    For i = 1 To a
+        j = 5
+        While Tableau3D(i, j, 2) <> ""
+            If Find1D(Tableau3D(i, j, 2), TabCol()) = False Then
+                ReDim Preserve TabCol(1 To UBound(TabCol()) + 1)
+                TabCol(UBound(TabCol())) = Tableau3D(i, j, 2)
+            End If
+            j = j + 1
+        Wend
+    Next i
+    
+' Tri croissant de TabCol
+Call ShellSortInteger(TabCol)
+
+'''''''''''''''''
+    For i = 1 To UBound(TabCol())
+           Debug.Print TabCol(i)
+    Next i
+''''''''''''''''''''''''''''
+
+' Creation et populate du fichier final
+ReDim TableauOrd(1 To a + 2, 1 To UBound(TabCol()) - 1 + 2 + 4) ' -1 car TabCol(1) = 0
+
+    TableauOrd(1, 1) = "File"
+    TableauOrd(1, 2) = "Date"
+    TableauOrd(1, 3) = "Time"
+    TableauOrd(1, 4) = "Valoren"
+    TableauOrd(2, 2) = " "
+    TableauOrd(2, 2) = " "
+    TableauOrd(2, 3) = " "
+    TableauOrd(2, 4) = " "
+    
+        Cells(1, 3).Value = "Time"
+    Cells(1, 4).Value = "Req"
+    Cells(1, 5).Value = "Req2"
+    Cells(1, 6).Value = "GLID"
+    Cells(1, 7).Value = "Symbol"
+    Cells(1, 8).Value = "ML/MO5"
+    
+' Remplissage nom et numero de colonnes
+    For j = 2 To UBound(TabCol())
+        TableauOrd(2, j + 5 - 2) = TabCol(j)
+        TableauOrd(1, j + 5 - 2) = WorksheetFunction.VLookup(TabCol(j), Ws_Req.Columns("A:B"), 2, 0)
+    Next j
+    
+' Remplissage des colonnes 1 et 2 (FileName et Date)
+    l = 1
+    For i = 1 To UBound(TableauData(), 1)
+        For j = l To TableauData(i, 4) + l - 1
+            TableauOrd(j + 2, 1) = TableauData(i, 1)
+            TableauOrd(j + 2, 2) = TableauData(i, 2)
+        Next j
+        l = l + TableauData(i, 4)
+    Next i
+    
+' Remplissage des données du tableau 3D
+    For i = 1 To a
+        TableauOrd(i + 2, 3) = Tableau3D(i, 1, 1) ' Colonnes 3 et 4 (Time et Valoren)
+        TableauOrd(i + 2, 4) = Tableau3D(i, 2, 1)
+        
+        j = 3  ' Remplissage des datas
+        While Tableau3D(i, j, 2) <> ""
+            x = WorksheetFunction.Match(Tableau3D(i, j, 2) * 1, TabCol, 0)
+            TableauOrd(i + 2, x + 4 - 1) = Tableau3D(i, j, 1)
+            j = j + 1
+        Wend
+    Next i
+    
+'''''''''''''''''
+'    For i = 1 To 50
+'       For j = 1 To 50
+'           Debug.Print TableauOrd(i, j)
+'       Next j
+'    Next i
+''''''''''''''''''''''''''''
+    
+' On met le tableau final dans un tableau 1 dimension et on le sauve en fichier txt.
+
+    Fichier = Join(File1Dim(TableauOrd(), 2), vbLf)
+    FileName = ActiveWorkbook.Path & "\ReadTrace_TK_" & Date & "_" & WorksheetFunction.Substitute(Time, ":", ".")
+    FileName = WorksheetFunction.Substitute(FileName, "/", ".")
+    Call WriteFileFromBuffer(FileName & ".txt", Fichier)
+    
+    Workbooks.OpenText FileName:=FileName & ".txt", Tab:=True
+    
+    Cells.Select
+    With Selection.Font
+        .Name = "Arial"
+        .Size = 8
+    End With
+    
+    Rows("1:2").Select
+    With Selection
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .WrapText = True
+    End With
+    Cells.ColumnWidth = 9
+    Cells.EntireRow.AutoFit
+    Cells.EntireColumn.AutoFit
+    
+    Rows("3:3").Select
+    ActiveWindow.FreezePanes = True
+
+    ActiveSheet.Sort.SortFields.Clear
+    ActiveSheet.Sort.SortFields.Add Key:=Range("E3:D" & Range("E800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    ActiveSheet.Sort.SortFields.Add Key:=Range("D3:D" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    ActiveSheet.Sort.SortFields.Add Key:=Range("B3:B" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortTextAsNumbers
+    ActiveSheet.Sort.SortFields.Add Key:=Range("C3:C" & Range("D800000").End(xlUp).Row), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    With ActiveSheet.Sort
+        .SetRange Range(Cells(3, 1), Cells(Range("D800000").End(xlUp).Row, Range("ZZ1").End(xlToLeft).Column))
+        .Header = xlGuess
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+    Cells(1, 1).Select
+    
+    ActiveWorkbook.SaveAs FileName:=FileName & ".xlsx", FileFormat:=xlOpenXMLWorkbook
+    Kill FileName & ".txt"
+
+End Sub
+
+'###########################################
+'############# TKMDF  Big File #############
+'###########################################
+
+Sub ReadTrace_TK_BigFile()
+    
+Dim MaxCol As Integer
+Dim Ws_Data As Worksheet, Ws_Decrypt As Worksheet, Ws_Req As Worksheet, Ws_Final As Worksheet
+Dim FileName As String, WorkbookName As String
+
+    WorkbookName = ActiveWorkbook.Name
+Set Ws_Data = ThisWorkbook.Worksheets("Trace")
+Set Ws_Req = ThisWorkbook.Worksheets("TK_Req")
+    Sheets.Add After:=Worksheets(Worksheets.Count)
+    ActiveSheet.Name = "Decrypt"
+Set Ws_Decrypt = Worksheets("Decrypt")
+
+' On met la date en colonne B
+    a = InStr(1, Ws_Data.Cells(1, 1), "_")
+    For i = 1 To Ws_Data.Range("A800000").End(xlUp).Row
+        Ws_Data.Cells(i, 2).Value = CDate(Mid(Ws_Data.Cells(i, 1), a + 1, 4) & "." & Mid(Ws_Data.Cells(i, 1), a + 5, 2) & "." & Mid(Ws_Data.Cells(i, 1), a + 7, 2))
+    Next i
+    
+    ' On remplace Exch et Val
+    Ws_Data.Columns(3).Replace What:=";Val:", Replacement:=";1="
+    Ws_Data.Columns(3).Replace What:=";Exch:", Replacement:=";2="
+    
+    ' On parse sur ; et =
+    Ws_Data.Columns(3).TextToColumns Destination:=Range("C1"), DataType:=xlDelimited, _
+        TextQualifier:=xlDoubleQuote, ConsecutiveDelimiter:=False, Tab:=False, _
+        Semicolon:=True, Comma:=False, Space:=False, Other:=True, OtherChar:="="
+        
+' On travaille sur un nouvel onglet Decrypt
+
+    Ws_Data.Columns("A:C").Copy Destination:=Ws_Decrypt.Range("A1")
+    For i = 1 To Ws_Data.Range("A800000").End(xlUp).Row
+        For j = 4 To Ws_Data.Cells(i, 4000).End(xlToLeft).Column
+            Ws_Decrypt.Cells(i, Ws_Data.Cells(i, j) + 4) = Ws_Data.Cells(i, j + 1)
+            MaxCol = WorksheetFunction.Max(MaxCol, Ws_Data.Cells(i, j) + 4)
+            j = j + 1
+                    
+        Next j
+    Next i
+
+    Ws_Decrypt.Rows("1:2").Cut
+    Ws_Decrypt.Cells(Cells(800000, 1).End(xlUp).Row + 1, 1).Select
+    ActiveSheet.Paste
+
+    i = Ws_Decrypt.Range("A800000").End(xlUp).Row
+    For j = 4 To MaxCol
+        If WorksheetFunction.CountA(Range(Ws_Decrypt.Cells(3, j), Ws_Decrypt.Cells(i, j))) > 0 Then
+            Ws_Decrypt.Cells(2, j) = j - 4
+            Ws_Decrypt.Cells(1, j) = WorksheetFunction.VLookup(j - 4, Ws_Req.Columns("A:B"), 2, 0)
+        End If
+    Next j
+    
+    Ws_Decrypt.Cells(1, 1).Value = "File"
+    Ws_Decrypt.Cells(1, 2).Value = "Date"
+    Ws_Decrypt.Cells(1, 3).Value = "Time"
+    
+' On met les colonnes qui contiennent des datas dans un tableau
+    Dim TabCol()
+    
+    i = 1
+    For j = 1 To MaxCol
+        If Ws_Decrypt.Cells(1, j) <> "" Then
+            ReDim Preserve TabCol(1 To i)
+            TabCol(i) = j
+            i = i + 1
+        End If
+    Next j
+    
+    Sheets.Add After:=Sheets(Sheets.Count)
+    ActiveSheet.Name = "Decrypted Trace"
+
+    For j = 1 To UBound(TabCol)
+        Ws_Decrypt.Columns(TabCol(j)).Copy Destination:=Sheets("Decrypted Trace").Cells(1, j)
+    Next j
+    
+    Application.DisplayAlerts = False
+        Ws_Decrypt.Delete
+        Ws_Data.Delete
+    Application.DisplayAlerts = True
+
+    Set Ws_Decrypt = ActiveSheet
+    With Ws_Decrypt.Cells.Font
+        .Name = "Arial"
+        .Size = 8
+    End With
+    
+    With Ws_Decrypt.Rows("1:2")
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .WrapText = True
+    End With
+    
+    Ws_Decrypt.Columns(3).NumberFormat = "hh:mm:ss;@"
+    Ws_Decrypt.Columns(2).NumberFormat = "dd/mm/yy;@"
+    
+    Ws_Decrypt.Cells.ColumnWidth = 9
+    
+    Ws_Decrypt.Rows("3:3").Select
+    ActiveWindow.FreezePanes = True
+
+    LastRow = Ws_Decrypt.Cells(800000, 1).End(xlUp).Row
+    LastColumn = Ws_Decrypt.Cells(1, 800).End(xlToLeft).Column
+
+    With ActiveWorkbook.Ws_Decrypt.Sort
+        .SortFields.Clear
+        .SortFields.Add Key:=Range("D3:D" & LastRow), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        .SortFields.Add Key:=Range("B3:B" & LastRow), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        .SortFields.Add Key:=Range("C3:C" & LastRow), SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+        .SetRange Range("A2:" & Cells(LastRow, LastColumn))
+        .Header = xlYes
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+
+
+    Decrypt.Cells(1, 1).Select
+    
+    
+    Call Date_and_Time
+    Call Color
+    Call AjoutBouton
+    
+    Ws_Decrypt.Cells.EntireRow.AutoFit
+    Ws_Decrypt.Cells.EntireColumn.AutoFit
+
+    FileName = RepertoireTrace & "ReadTrace_TK_" & Date & "_" & WorksheetFunction.Substitute(Time, ":", ".")
+    FileName = WorksheetFunction.Substitute(FileName, "/", ".")
+    
+    Application.DisplayAlerts = False
+    ActiveSheet.Move
+    
+    ActiveSheet.Shapes("SortH").OnAction = "'" & WorkbookName & "'!SortCellsH2"
+    ActiveSheet.Shapes("SortV").OnAction = "'" & WorkbookName & "'!SortCellsV2"
+    ActiveSheet.Shapes("Unsort").OnAction = "'" & WorkbookName & "'!UnSortCells"
+
+    On Error Resume Next
+    ActiveWorkbook.SaveAs FileName:=FileName & ".xlsx", FileFormat:=xlOpenXMLWorkbook
+    Application.DisplayAlerts = False
+    
+    
+End Sub
+
+Sub XlsRegroup(Fichiers As Variant) 'Regroupe tous les xlsx à rassembler dans la feuille Excel
+
+Dim wb_Tools As Workbook, FichierSave$
+Set wb_Tools = ActiveWorkbook
+
+    For i = LBound(Fichiers, 1) To UBound(Fichiers, 1)
+        a = wb_Tools.Sheets.Count
+        Workbooks.Open FileName:=Fichiers(i)
+        
+        ActiveWorkbook.Sheets("Decrypted Trace").Copy After:=wb_Tools.Sheets(wb_Tools.Sheets.Count)
+        Workbooks(Mid(Fichiers(i), InStrRev(Fichiers(i), "\") + 1, 100)).Close
+        wb_Tools.Sheets("Decrypted Trace").Name = "File" & i
+    Next i
+    RepertoireFiles = Mid(Fichiers(LBound(Fichiers, 1)), 1, InStrRev(Fichiers(LBound(Fichiers, 1)), "\"))
+     
+    Call Reunification
+    
+    Application.DisplayAlerts = False
+    For i = Sheets.Count To 1 Step -1
+        If Left(Sheets(i).Name, 4) = "File" Then Sheets(i).Delete
+    Next i
+    
+    Sheets("Collage").Move
+    FileName = "TK_Consolide_" & Date & "_" & Time
+    FileName = WorksheetFunction.Substitute(FileName, "/", ".")
+    FichierSave = RepertoireFiles & WorksheetFunction.Substitute(FileName, ":", ".")
+
+    'On Error Resume Next
+    ActiveWorkbook.SaveAs FileName:=FichierSave & ".xlsx", FileFormat:=xlOpenXMLWorkbook
+
+    Application.DisplayAlerts = True
+    
+End Sub
+
+Sub Reunification()
+
+' On commence par lister les champs disponible dans un tableau
+
+Dim Tableau() As Integer
+ReDim Tableau(0)
+    
+    For i = 1 To Sheets.Count
+        If Left(Sheets(i).Name, 4) = "File" Then
+            On Error Resume Next
+            For j = 1 To Sheets(i).Cells(2, 800).End(xlToLeft).Column
+                varTemp = ""
+                varTemp = WorksheetFunction.Match(Sheets(i).Cells(2, j), Tableau(), 0)
+                If varTemp = "" And Sheets(i).Cells(2, j) <> "" Then
+                    ReDim Preserve Tableau(0 To UBound(Tableau()) + 1)
+                    Tableau(UBound(Tableau())) = Sheets(i).Cells(2, j)
+                End If
+            Next j
+        End If
+    Next i
+
+    Call ShellSortInteger(Tableau()) ' Tri croissant du tableau
+
+'For i = LBound(Tableau()) To UBound(Tableau())
+'    Sheets("Collage").Cells(i + 1, 1) = Tableau(i)
+'Next i
+
+'''''' Approche où on copie Colonne par Colonne ''''''
+
+' Collage des onglets dans un dernier onglet
+'    Sheets(1).Name = "Collage"
+'    Set Ws_Collage = Sheets(1)
+'
+'    For i = 2 To Sheets.Count - 1
+'        LastRow = Sheets(i).Cells(800000, 1).End(xlUp).Row
+'        LastRow_Collage = Ws_Collage.Cells(800000, 1).End(xlUp).Row
+'        Sheets(i).Range(Cells(3, 1), Cells(LastRow, 4)).Copy Destination:=Ws_Collage.Cells(LastRow_Collage + 1, 1)
+'        For j = 5 To Sheets(i).Cells(2, 600).End(xlToLeft).Column
+'            ColNb = WorksheetFunction.Match(Sheets(i).Cells(2, j), Tableau(), 0) + 4 ' Car il n'y a pas les 4 premieres col dans Tableau
+'            Sheets(i).Range(Cells(3, j), Cells(LastRow, j)).Copy Destination:=Ws_Collage.Cells(LastRow_Collage + 1, ColNb)
+'        Next j
+'    Next i
+    
+''''''' Approche où on insert des colonnes et on copie tout d'un coup ''''''
+
+    Sheets.Add After:=Sheets(Sheets.Count)
+    ActiveSheet.Name = "Collage"
+    Set Ws_Collage = ActiveSheet
+    
+    For i = 5 To Sheets.Count - 1
+        If Left(Sheets(i).Name, 4) = "File" Then
+            LastRow = Sheets(i).Cells(800000, 1).End(xlUp).Row
+            LastRow_Collage = Ws_Collage.Cells(800000, 1).End(xlUp).Row
+            If LastRow_Collage = 1 Then LastRow_Collage = 2
+        
+            On Error Resume Next
+            For j = 391 To UBound(Tableau())
+                ColNb = ""
+                ColNb = WorksheetFunction.Match(Tableau(j), Sheets(i).Rows(2), 0)
+                If ColNb = "" Then
+                    Sheets(i).Columns(ColNb2 + 1).Insert
+                Else: ColNb2 = ColNb
+                End If
+            Next j
+        
+            Sheets(i).Rows(3 & ":" & LastRow).Copy Destination:=Ws_Collage.Cells(LastRow_Collage + 1, 1)
+        End If
+    Next i
+
+    Ws_Collage.Cells(1, 1) = "File"
+    Ws_Collage.Cells(1, 2) = "Exchange"
+    Ws_Collage.Cells(1, 3) = "Date"
+    Ws_Collage.Cells(1, 4) = "Time"
+    Ws_Collage.Cells(1, 5) = "Time GMT"
+    Ws_Collage.Cells(1, 6) = "Date Market"
+    Ws_Collage.Cells(1, 7) = "Time Market"
+
+    For i = 1 To UBound(Tableau())
+        Ws_Collage.Cells(2, i + 7) = Tableau(i)
+        Ws_Collage.Cells(1, i + 7) = WorksheetFunction.VLookup(Tableau(i), Sheets("TK_Req").Columns("A:B"), 2, 0)
+    Next i
+
+    With Ws_Collage.Rows("1:2")
+        .Font.Name = "Arial"
+        .Font.Size = 8
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .WrapText = True
+    End With
+    
+    Ws_Collage.Rows("3:3").Select
+    ActiveWindow.FreezePanes = True
+    
+    With Cells
+        .ColumnWidth = 6.2
+        .EntireRow.AutoFit
+        .EntireColumn.AutoFit
+    End With
+    
+    Columns(1).Hidden = True
+    
+End Sub
